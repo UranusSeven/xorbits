@@ -16,7 +16,7 @@
 import asyncio
 import logging
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Set, Union
 
 import xoscar as mo
 from xoscar.serialization import AioDeserializer
@@ -539,6 +539,88 @@ class StorageHandlerActor(mo.Actor):
         )
         logger.debug("Finish fetching %s from band %s", data_keys, remote_band)
 
+    async def before_fetch(
+        self,
+        session_id: str,
+        data_keys: List[Union[str, tuple]],
+        local_band_name: str,
+        remote_address: str,
+    ) -> Dict[BandType, Set[str]]:
+        """
+        Collect the metadata of data to be fetched.
+
+        Parameters
+        ----------
+        # TODO
+        session_id
+        data_keys
+        local_band_name
+        remote_address
+
+        Returns
+        -------
+        # TODO
+        """
+
+        # get metadata from local data manager.
+        get_data_info_tasks = []
+        for data_key in data_keys:
+            get_data_info_tasks.append(
+                self._data_manager_ref.get_data_info.delay(
+                    session_id, data_key, local_band_name, error="ignore"
+                )
+            )
+        data_infos = await self._data_manager_ref.get_data_info.batch(
+            *get_data_info_tasks
+        )
+
+        pin_delays = []
+        missing_keys = []
+        for data_key, info in zip(data_keys, data_infos):
+            if info is not None:
+                if local_band_name and local_band_name != info.band:
+                    # for gpu devices, transfer is needed.
+                    missing_keys.append(data_key)
+                else:
+                    pin_delays.append(
+                        self._data_manager_ref.pin.delay(
+                            session_id, data_key, self._band_name
+                        )
+                    )
+            else:
+                # need to fetch from remote worker.
+                missing_keys.append(data_key)
+        await self._data_manager_ref.pin.batch(*pin_delays)
+
+        meta_api = await self._get_meta_api(session_id)
+        get_meta_tasks = []
+        if remote_address is None or local_band_name is None:
+            # some mapper keys are absent, specify error='ignore'
+            # remember that meta only records those main keys
+            get_meta_tasks = [
+                (
+                    meta_api.get_chunk_meta.delay(
+                        data_key[0] if isinstance(data_key, tuple) else data_key,
+                        fields=["bands"],
+                        error="ignore",
+                    )
+                )
+                for data_key in missing_keys
+            ]
+
+        if get_meta_tasks:
+            metas = await meta_api.get_chunk_meta.batch(*get_meta_tasks)
+        else:  # pragma: no cover
+            metas = [{"bands": [(remote_address, local_band_name)]}] * len(missing_keys)
+        assert len(metas) == len(missing_keys)
+
+        remote_keys = defaultdict(set)
+        for data_key, bands in zip(missing_keys, metas):
+            if bands is not None:
+                remote_keys[bands["bands"][0]].add(data_key)
+
+        return remote_keys
+
     async def fetch_batch(
         self,
         session_id: str,
@@ -619,6 +701,24 @@ class StorageHandlerActor(mo.Actor):
             fetch_keys.extend(list(keys))
 
         await asyncio.gather(*transfer_tasks)
+
+        set_meta_keys = set()
+        for data_key in fetch_keys:
+            # skip shuffle keys
+            if isinstance(data_key, tuple):
+                set_meta_keys.add(data_key[0])
+            else:
+                set_meta_keys.add(data_key)
+        append_bands_delays = [
+            meta_api.add_chunk_bands.delay(key, [(self.address, self._band_name)])
+            for key in set_meta_keys
+        ]
+
+        if append_bands_delays:
+            await meta_api.add_chunk_bands.batch(*append_bands_delays)
+
+    async def post_fetch(self, session_id: str, fetch_keys):
+        meta_api = await self._get_meta_api(session_id)
 
         set_meta_keys = set()
         for data_key in fetch_keys:

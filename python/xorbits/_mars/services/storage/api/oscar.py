@@ -198,9 +198,55 @@ class StorageAPI(AbstractStorageAPI):
         error: str
             raise or ignore
         """
-        await self._storage_handler_ref.fetch_batch(
-            self._session_id, [data_key], level, band_name, remote_address, error
+        await self._fetch([data_key], level, band_name, remote_address, error)
+
+    async def _fetch(
+        self,
+        data_keys: List[Union[str, tuple]],
+        level: StorageLevel = None,
+        band_name: str = None,
+        remote_address: str = None,
+        error: str = "raise",
+    ):
+        remote_keys = await self._storage_handler_ref.before_fetch(
+            self._session_id,
+            data_keys,
+            band_name,
+            remote_address,
         )
+
+        transfer_tasks = []
+
+        from xorbits._mars.typing import BandType
+
+        async def transfer(
+            data_keys_: List[Union[str, tuple]],
+            remote_band: BandType,
+            fetch_band_name: str,
+        ):
+            from xorbits._mars.services.storage.transfer import SenderManagerActor
+
+            sender_ref: mo.ActorRefType[SenderManagerActor] = await mo.actor_ref(
+                address=remote_band[0], uid=SenderManagerActor.gen_uid(remote_band[1])
+            )
+            await sender_ref.send_batch_data(
+                self._session_id,
+                data_keys_,
+                self._data_manager_ref.address,
+                level,
+                fetch_band_name,
+                error=error,
+            )
+
+        fetch_keys = []
+        for band, keys in remote_keys.items():
+            transfer_tasks.append(transfer(list(keys), band, band_name or band[1]))
+            fetch_keys.extend(list(keys))
+
+        import asyncio
+
+        await asyncio.gather(*transfer_tasks)
+        await self._storage_handler_ref.post_fetch(self._session_id, fetch_keys)
 
     @fetch.batch
     async def batch_fetch(self, args_list, kwargs_list):
@@ -214,9 +260,8 @@ class StorageAPI(AbstractStorageAPI):
                 assert extracted_args == (level, band_name, dest_address, error)
             extracted_args = (level, band_name, dest_address, error)
             data_keys.append(data_key)
-        await self._storage_handler_ref.fetch_batch(
-            self._session_id, data_keys, *extracted_args
-        )
+
+        await self._fetch(data_keys, *extracted_args)
 
     @mo.extensible
     async def unpin(self, data_key: str, error: str = "raise"):
