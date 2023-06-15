@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import logging
 import sys
 from typing import Any, List, Optional, Tuple, Type, TypeVar, Union
 
@@ -32,6 +32,9 @@ from .core import AbstractStorageAPI
 
 _is_windows = sys.platform.lower().startswith("win")
 APIType = TypeVar("APIType", bound="StorageAPI")
+
+
+logger = logging.getLogger(__name__)
 
 
 class StorageAPI(AbstractStorageAPI):
@@ -159,6 +162,14 @@ class StorageAPI(AbstractStorageAPI):
         error: str
             raise or ignore
         """
+        logger.debug(
+            "Delete %s, %s on %s, %s",
+            self._session_id,
+            data_key,
+            self._address,
+            self._band_name,
+        )
+
         await self._storage_handler_ref.delete(self._session_id, data_key, error=error)
 
     @delete.batch
@@ -224,6 +235,13 @@ class StorageAPI(AbstractStorageAPI):
             remote_band: BandType,
             fetch_band_name: str,
         ):
+            logger.debug(
+                "Fetch %s from %s to %s, %s",
+                data_keys_,
+                remote_band,
+                self._address,
+                fetch_band_name,
+            )
             from xorbits._mars.services.storage.transfer import SenderManagerActor
 
             sender_ref: mo.ActorRefType[SenderManagerActor] = await mo.actor_ref(

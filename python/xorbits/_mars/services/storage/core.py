@@ -231,6 +231,8 @@ class DataManagerActor(mo.Actor):
             available_infos = []
             for info in self._data_key_to_infos[session_id, data_key]:
                 info_band = info.data_info.band
+                if info_band != band_name:
+                    logger.debug(f"Got band: {info_band}, target band: {band_name}")
                 if info_band.startswith("gpu-"):  # pragma: no cover
                     # not available for different GPU bands
                     if info_band == band_name:
@@ -284,6 +286,9 @@ class DataManagerActor(mo.Actor):
         object_info: ObjectInfo = None,
         sub_key_infos: Dict = None,
     ):
+        logger.debug(
+            f"Put data info, key: {data_key}, addr: {self.address}, band: {data_info.band}"
+        )
         info = InternalDataInfo(data_info, object_info)
         self._data_key_to_infos[(session_id, data_key)].append(info)
         self._data_info_list[data_info.level, data_info.band][
@@ -309,6 +314,9 @@ class DataManagerActor(mo.Actor):
         level: StorageLevel,
         band_name: str,
     ):
+        logger.debug(
+            "Delete data info %s, %s on %s, %s", session_id, data_key, level, band_name
+        )
         if (session_id, data_key) in self._data_key_to_infos:
             self._data_info_list[level, band_name].pop((session_id, data_key))
             self._spill_strategy[level, band_name].record_delete_info(
@@ -469,6 +477,7 @@ class StorageManagerActor(mo.StatelessActor):
                 for gpu_band in storage_bands:
                     index = int(gpu_band[4:])
                     size = cuda_infos[index].fb_mem_info.available
+                    setup_params["device"] = index
                     params = dict(size=size, **setup_params)
                     clients.append(await self._setup_storage(gpu_band, backend, params))
             else:

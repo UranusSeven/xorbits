@@ -89,7 +89,18 @@ class SenderManagerActor(mo.StatelessActor):
                 self._eof_marks.append(eof_mark)
                 self._buffers.append(buffer)
                 self._send_keys.append(key)
-                if sum(len(b) for b in self._buffers) >= block_size:
+                size = 0
+                for b in self._buffers:
+                    if hasattr(b, "__len__"):
+                        # bytes
+                        size += len(b)
+                    elif hasattr(b, "nbytes"):
+                        # cudf.core.buffer.Buffer
+                        size += getattr(b, "nbytes")
+                    else:
+                        raise ValueError(f"Unexpected buffer type: {type(b)}")
+
+                if size >= block_size:
                     await self.flush()
 
         sender = BufferedSender()
@@ -110,8 +121,14 @@ class SenderManagerActor(mo.StatelessActor):
                 # when moving to a remote worker. Thus, we think the reader reaches EOF
                 # when a `read` request returns nothing, rather than comparing the `sent_size`
                 # and the `store_size`.
-                #
-                is_eof = not part_data  # can be non-empty bytes, empty bytes and None
+
+                # can be non-empty bytes, empty bytes and None
+                try:
+                    # length is 0 when is bytes-like
+                    is_eof = len(part_data)
+                except TypeError:
+                    # or is None
+                    is_eof = not part_data
                 await sender.send(part_data, is_eof, data_key)
                 if is_eof:
                     break
@@ -129,7 +146,11 @@ class SenderManagerActor(mo.StatelessActor):
         error: str = "raise",
     ):
         logger.debug(
-            "Begin to send data (%s, %s) to %s", session_id, data_keys, address
+            "Begin to send data (%s, %s) to %s, %s",
+            session_id,
+            data_keys,
+            address,
+            band_name,
         )
 
         tasks = []

@@ -78,7 +78,13 @@ class StorageHandlerActor(mo.Actor):
     async def __post_create__(self):
         self._clients = clients = dict()
         for backend, init_params in self._storage_init_params.items():
-            logger.debug("Start storage %s with params %s", backend, init_params)
+            logger.debug(
+                "Start storage %s on %s, %s with params %s",
+                backend,
+                self.address,
+                self._band_name,
+                init_params,
+            )
             storage_cls = get_storage_backend(backend)
             client = storage_cls(**init_params)
             for level in StorageLevel.__members__.values():
@@ -292,6 +298,14 @@ class StorageHandlerActor(mo.Actor):
 
     @mo.extensible
     async def delete(self, session_id: str, data_key: str, error: str = "raise"):
+        logger.debug(
+            "Delete %s, %s on %s, %s",
+            session_id,
+            data_key,
+            self.address,
+            self._band_name,
+        )
+
         if error not in ("raise", "ignore"):  # pragma: no cover
             raise ValueError("error must be raise or ignore")
 
@@ -338,6 +352,14 @@ class StorageHandlerActor(mo.Actor):
                 data_keys.update(set(k))
             else:
                 data_keys.add(k)
+
+        logger.debug(
+            "Delete %s, %s on %s, %s",
+            session_id,
+            data_keys,
+            self.address,
+            self._band_name,
+        )
 
         infos_list = await self._data_manager_ref.get_data_infos.batch(
             *[

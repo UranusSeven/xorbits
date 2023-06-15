@@ -192,8 +192,10 @@ class SubtaskExecutionActor(mo.StatelessActor):
         for chunk in subtask.chunk_graph:
             if chunk.key in subtask.pure_depend_keys:
                 continue
-            if chunk.op.gpu:  # pragma: no cover
+            if band_name:
                 to_fetch_band = band_name
+            # if chunk.op.gpu:  # pragma: no cover
+            #     to_fetch_band = band_name
             else:
                 to_fetch_band = "numa-0"
 
@@ -529,7 +531,10 @@ class SubtaskExecutionActor(mo.StatelessActor):
                 f"Subtask {subtask.subtask_id} is already running on this band[{self.address}]."
             )
         logger.debug(
-            "Start to schedule subtask %s on %s.", subtask.subtask_id, self.address
+            "Start to schedule subtask %s on %s, %s.",
+            subtask.subtask_id,
+            self.address,
+            band_name,
         )
         self._submitted_subtask_count.record(1, {"band": self.address})
         with mo.debug.no_message_trace():

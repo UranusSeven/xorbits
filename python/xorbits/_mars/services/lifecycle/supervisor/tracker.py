@@ -151,6 +151,7 @@ class LifecycleTrackerActor(mo.Actor):
         storage_api_to_deletes = defaultdict(list)
         for key, bands in key_to_addresses.items():
             for band in bands:
+                logger.debug(f"Removing {key} on {band}")
                 # storage API is cached for same arguments
                 storage_api = await StorageAPI.create(
                     self._session_id, band[0], band[1]
